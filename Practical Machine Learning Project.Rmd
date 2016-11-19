@@ -1,0 +1,123 @@
+---
+title: "Practical Machine Learning Project"
+author: "Daniel Montoya"
+date: "19 de noviembre de 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 1. Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal was to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+### 2. Data Analysis
+
+#### Downloading reading, and splitting the data:
+
+The "test"" data will be treated as evaluation data, and the training data, which is large will be split into training and test datasets
+```{r, message=FALSE}
+if (!file.exists("training.csv")){
+    trainurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    download.file(trainurl, "training.csv")
+}
+if (!file.exists("testing.csv")){
+    testurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(testurl, "testing.csv")
+}
+pmldata <- read.csv("training.csv")
+evaluationdata <- read.csv("testing.csv")
+
+library(caret)
+set.seed(10)
+inTrain <- createDataPartition(y=pmldata$classe, p=0.75, list=FALSE)
+training <- pmldata[inTrain,]
+testing <- pmldata[-inTrain,]
+```
+
+#### Exploring the data:
+
+The outcome variable is the classe variable, let us check its behavior:
+```{r, echo=FALSE}
+barplot(table(training$classe))
+```
+
+The outcome variable is a factor variable with six levels, which distribute nearly uniform.  
+
+Using `str(training)` we see that there are 19622 observations of 160 variables. The number of cases and variables is large, therefore we seek to do some feature extraction to reduce the number of variables.  
+Let us first check the proportion of mising values in each variable:
+
+```{r}
+as.vector(apply(training, 2, function(x) sum(is.na(x))/nrow(training)))
+```
+
+We see that all variables with missing values have more than 97% of missing data, these variables should be removed since they carry very little information.
+
+```{r}
+missing <- which(as.vector(apply(training, 2, function(x) sum(is.na(x)))) > 0)
+training <- training[,-missing]
+as.vector(apply(training, 2, function(x) sum(is.na(x))/nrow(training)))
+```
+
+Now we have no missing values in the training set.  
+
+Checking the contents of the variables `X`, `raw_timestamp_part_1`, `raw_timestamp_part_2`, `cvtd_timestamp`, `new_window`, `num_window`, we see that these variables do not seem relevant to prediction since they are identifiers of data collection, we may omit them from further analysis.
+
+```{r}
+training <- training[,-c(1,3:7)]
+```
+
+Now let us check if there are near zero variance variables in the data set. These variables should be removed since they carry very little information
+
+```{r}
+nzerovar <- nearZeroVar(training)
+training <- training[,-nzerovar]
+```
+
+And these same transformations should be done to the test and evaluation set too:
+
+```{r}
+testing <- testing[,-missing]
+testing <- testing[,-c(1,3:7)]
+testing <- testing[,-nzerovar]
+evaluationdata <- evaluationdata[,-missing]
+evaluationdata <- evaluationdata[,-c(1,3:7)]
+evaluationdata <- evaluationdata[,-nzerovar]
+```
+
+### Fitting the predictive model
+
+Now let us use random forests as predictive algorithm. The `foreach` package and the function `registerDoSEQ()` are to provide parallel computing which improves computation speed
+
+```{r, message=FALSE, cache=TRUE}
+library(foreach)
+library(randomForest)
+registerDoSEQ()
+model <- foreach(ntree=rep(150, 6), .combine=randomForest::combine, .packages = 'randomForest') %dopar% {
+randomForest(training[-ncol(training)], training$classe, ntree=ntree) 
+}
+```
+
+Now let us check the in sample error rate:
+
+```{r}
+PredInSample <- predict(model, newdata=training)
+confusionMatrix(PredInSample,training$classe)
+
+```
+
+The accuracy for this model is 1, perfect accuracy, which may suggest overfitting, let us check the out of sample error rate and confusion matrix statistics to check this suspicion:
+
+```{r}
+PredOutSample <- predict(model, newdata=testing)
+confusionMatrix(PredOutSample,testing$classe)
+```
+
+The out of sample error rate is less than 1% so this seems to be a very good model.
+
+Finally let us predict the classes in the test data
+
+```{r}
+predict(model,evaluationdata)
+```
